@@ -15,7 +15,12 @@ export const auditViewTemplate = `
 </div>
 <div class="card" v-show="tab===5">
   <h2>争用 / 锁</h2>
-  <p class="muted">争用 {{contention.length}} · 持锁 {{locks.length}}</p>
+  <p class="muted">争用 {{contention.length}} · 持锁 {{locks.length}} · 影表争用 {{dash.contention||0}}</p>
+  <p>仪表同源校验：<b :class="sameSource.aligned?'ok':'late'">{{sameSource.aligned}}</b>
+    <span v-if="sameSource.aligned===false" class="muted">
+      <span v-for="(d,k) in sameSource.drift" :key="'d'+k">{{k}} 影表{{d.counter}}/实表{{d.live}} </span>
+    </span>
+  </p>
   <table>
     <thead><tr><th>锁键</th><th>角色</th><th>动作</th><th>时间</th></tr></thead>
     <tbody>

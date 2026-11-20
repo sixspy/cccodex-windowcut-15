@@ -6,7 +6,7 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException
 
 from auth import AuthHeader, require_user
-from db import connect, write_audit
+from db import commit_with_counters, connect, write_audit
 from locks import release, require_lock
 from models import HoldIn
 
@@ -48,11 +48,11 @@ def create_hold(body: HoldIn, authorization: AuthHeader = None):
                 body.biz_key,
                 {"window_id": w["id"], "hold_id": cur.lastrowid},
             )
-            conn.commit()
+            commit_with_counters(conn)
             return {"ok": True, "hold_id": cur.lastrowid, "status": "暂存"}
         finally:
             release(conn, lock_key, user)
-            conn.commit()
+            commit_with_counters(conn)
 
 
 @router.post("/api/holds/{hold_id}/release-stub")
@@ -75,5 +75,5 @@ def release_hold_stub(hold_id: int, authorization: AuthHeader = None):
                 "note": "母仓不落地，仅登记",
             },
         )
-        conn.commit()
+        commit_with_counters(conn)
     return {"ok": True, "stub": True}

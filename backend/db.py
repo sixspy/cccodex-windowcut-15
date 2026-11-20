@@ -23,7 +23,7 @@ PRODUCT_META = {
         "hold_staging",
         "reopen",
     ],
-    "stubs": ["hold_release", "late_promote", "partition_mat", "reopen"],
+    "stubs": ["hold_release", "late_promote", "partition_mat"],
 }
 
 
@@ -132,6 +132,11 @@ CREATE TABLE IF NOT EXISTS reject_slips(
   amount REAL NOT NULL,
   reason TEXT NOT NULL,
   created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS dash_counter(
+  key TEXT PRIMARY KEY,
+  value INTEGER NOT NULL,
+  updated_at TEXT NOT NULL
 );
 """
 
@@ -255,7 +260,145 @@ def init_db() -> None:
         conn.executescript(SCHEMA)
         ensure_users(conn)
         seed_if_empty(conn)
+        reconcile_reopen_ledger(conn)
+        refresh_dash_counters(conn)
         conn.commit()
+
+
+COUNTER_KEYS = (
+    "open_windows",
+    "closed_windows",
+    "late_bucket",
+    "rejects",
+    "holds",
+    "materializations",
+    "contention",
+    "reopens",
+)
+
+
+def counter_snapshot(conn: sqlite3.Connection) -> dict[str, int]:
+    return {
+        "open_windows": conn.execute(
+            "SELECT COUNT(*) c FROM windows WHERE status='开启'"
+        ).fetchone()["c"],
+        "closed_windows": conn.execute(
+            "SELECT COUNT(*) c FROM windows WHERE status='已关闭'"
+        ).fetchone()["c"],
+        "late_bucket": conn.execute(
+            "SELECT COUNT(*) c FROM late_bucket"
+        ).fetchone()["c"],
+        "rejects": conn.execute(
+            "SELECT COUNT(*) c FROM reject_slips"
+        ).fetchone()["c"],
+        "holds": conn.execute(
+            "SELECT COUNT(*) c FROM hold_staging WHERE status='暂存'"
+        ).fetchone()["c"],
+        "materializations": conn.execute(
+            "SELECT COUNT(*) c FROM materializations"
+        ).fetchone()["c"],
+        "contention": conn.execute(
+            "SELECT COUNT(*) c FROM contention_log"
+        ).fetchone()["c"],
+        "reopens": conn.execute(
+            "SELECT COUNT(*) c FROM reopen_ledger WHERE status='已重开'"
+        ).fetchone()["c"],
+    }
+
+
+def refresh_dash_counters(conn: sqlite3.Connection) -> dict[str, int]:
+    """乙路径：由实表派生、UPSERT 进 dash_counter。调用方负责与业务同事务提交。
+
+    仪表卡与窗口条带此后只读 dash_counter，不得再各自聚合 windows 实表。
+    """
+    from datetime import datetime
+
+    counts = counter_snapshot(conn)
+    now = datetime.now().isoformat(timespec="seconds")
+    for key, value in counts.items():
+        conn.execute(
+            """INSERT INTO dash_counter(key,value,updated_at) VALUES (?,?,?)
+               ON CONFLICT(key) DO UPDATE
+                 SET value=excluded.value, updated_at=excluded.updated_at""",
+            (key, int(value), now),
+        )
+    return counts
+
+
+def read_dash_counters(conn: sqlite3.Connection) -> dict[str, int]:
+    """仪表唯一读口径：只读影子表，不回退实表聚合。"""
+    rows = conn.execute("SELECT key,value FROM dash_counter").fetchall()
+    values = {r["key"]: int(r["value"]) for r in rows}
+    return {k: values.get(k, 0) for k in COUNTER_KEYS}
+
+
+def commit_with_counters(conn: sqlite3.Connection) -> None:
+    refresh_dash_counters(conn)
+    conn.commit()
+
+
+DASH_DEVIATION = "仪表偏了"
+
+
+def record_dash_deviation(
+    conn: sqlite3.Connection, actor: str, target: str | None, detail: dict
+) -> None:
+    """偏离仪表同源册：拒写业务后，用独立事务登记「仪表偏了」。"""
+    write_audit(conn, actor, DASH_DEVIATION, target, detail)
+    conn.commit()
+
+
+def reconcile_reopen_ledger(conn: sqlite3.Connection) -> None:
+    """把历史「空桩登记」收敛进 windows，消除重开幽灵窗造成的关窗数虚高。"""
+    from datetime import datetime
+
+    now = datetime.now().isoformat(timespec="seconds")
+    rows = conn.execute(
+        "SELECT * FROM reopen_ledger WHERE status='空桩登记' ORDER BY id"
+    ).fetchall()
+    for r in rows:
+        w = conn.execute(
+            "SELECT * FROM windows WHERE id=?", (r["window_id"],)
+        ).fetchone()
+        if w is None:
+            conn.execute(
+                "UPDATE reopen_ledger SET status='孤儿' WHERE id=?", (r["id"],)
+            )
+            continue
+        if w["status"] == "已关闭" and int(w["generation"]) == int(r["from_generation"]):
+            conn.execute(
+                """UPDATE windows SET status='开启', generation=?, seal_token=NULL
+                   WHERE id=?""",
+                (int(r["to_generation"]), w["id"]),
+            )
+            conn.execute(
+                "UPDATE reopen_ledger SET status='已重开' WHERE id=?", (r["id"],)
+            )
+            write_audit(
+                conn,
+                "system",
+                "window_reopen_reconciled",
+                str(w["id"]),
+                {
+                    "ledger_id": r["id"],
+                    "from_generation": int(r["from_generation"]),
+                    "to_generation": int(r["to_generation"]),
+                    "note": "启动收敛历史空桩台账",
+                },
+                now,
+            )
+        else:
+            conn.execute(
+                "UPDATE reopen_ledger SET status='已重开' WHERE id=?", (r["id"],)
+            )
+            write_audit(
+                conn,
+                "system",
+                "reopen_ledger_marked",
+                str(w["id"]),
+                {"ledger_id": r["id"], "note": "世代不符，仅台账收敛"},
+                now,
+            )
 
 
 def write_audit(

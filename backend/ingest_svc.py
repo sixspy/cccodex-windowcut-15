@@ -6,7 +6,7 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException
 
 from auth import AuthHeader, require_user
-from db import connect, write_audit
+from db import commit_with_counters, connect, write_audit
 from locks import release, require_lock
 from models import EventIn
 
@@ -58,7 +58,7 @@ def ingest_event(body: EventIn, authorization: AuthHeader = None):
                     body.biz_key,
                     {"window": body.window_name},
                 )
-                conn.commit()
+                commit_with_counters(conn)
                 return {"disposition": "迟到桶", "event_id": eid}
 
             if not (w["open_at"] <= ts <= w["close_at"]):
@@ -86,7 +86,7 @@ def ingest_event(body: EventIn, authorization: AuthHeader = None):
                     body.biz_key,
                     {"window": body.window_name},
                 )
-                conn.commit()
+                commit_with_counters(conn)
                 raise HTTPException(409, "事件时间落在窗外且窗仍开启：拒收")
 
             cur = conn.execute(
@@ -101,11 +101,11 @@ def ingest_event(body: EventIn, authorization: AuthHeader = None):
                 body.biz_key,
                 {"window_id": w["id"]},
             )
-            conn.commit()
+            commit_with_counters(conn)
             return {"disposition": "窗内", "window_id": w["id"], "event_id": cur.lastrowid}
         finally:
             release(conn, lock_key, user)
-            conn.commit()
+            commit_with_counters(conn)
 
 
 @router.get("/api/events")

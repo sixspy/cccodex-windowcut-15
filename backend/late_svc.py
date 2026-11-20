@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from auth import AuthHeader, require_user
-from db import connect, write_audit
+from db import commit_with_counters, connect, write_audit
 from locks import release, require_lock
 
 router = APIRouter(tags=["late"])
@@ -74,7 +74,7 @@ def promote_stub(body: LatePromoteIn, authorization: AuthHeader = None):
                     "note": "空桩：未改正式窗内事件，待题面写路径落地",
                 },
             )
-            conn.commit()
+            commit_with_counters(conn)
             return {
                 "ok": True,
                 "stub": True,
@@ -82,7 +82,7 @@ def promote_stub(body: LatePromoteIn, authorization: AuthHeader = None):
             }
         finally:
             release(conn, lock_key, user)
-            conn.commit()
+            commit_with_counters(conn)
 
 
 @router.post("/api/late-bucket/{late_id}/discard-stub")
@@ -102,5 +102,5 @@ def discard_stub(late_id: int, authorization: AuthHeader = None):
             str(late_id),
             {"biz_key": late["biz_key"], "at": datetime.now().isoformat(timespec="seconds")},
         )
-        conn.commit()
+        commit_with_counters(conn)
     return {"ok": True, "stub": True}

@@ -29,6 +29,8 @@ createApp({
     const locks = ref([]);
     const holds = ref([]);
     const dash = ref({});
+    const stripCounts = ref({});
+    const sameSource = ref({ aligned: null, drift: {} });
     const form = ref({
       window_name: "W-1102",
       biz_key: "ORD-9",
@@ -82,6 +84,7 @@ createApp({
       const w = await api.get("/api/windows");
       if (w === null) return;
       windows.value = Array.isArray(w.body.items) ? w.body.items : [];
+      stripCounts.value = w.body.counts || {};
       const e = await api.get("/api/events");
       if (e === null) return;
       events.value = Array.isArray(e.body.items) ? e.body.items : [];
@@ -112,6 +115,9 @@ createApp({
       const d = await api.get("/api/dashboard");
       if (d === null) return;
       dash.value = d.body || {};
+      const ss = await api.get("/api/dashboard/same-source");
+      if (ss === null) return;
+      sameSource.value = ss.body || { aligned: null, drift: {} };
       if (windows.value.length) {
         const q = await api.get("/api/reconcile/" + windows.value[0].id);
         if (q === null) return;
@@ -153,8 +159,8 @@ createApp({
       const r = await api.post("/api/windows/" + id + "/reopen-stub", {
         mode: "作废重算",
       });
-      if (r && !r.ok) actionErr.value = r.body.detail || "重开空桩失败";
-      else if (r) actionErr.value = "重开空桩已登记";
+      if (r && !r.ok) actionErr.value = r.body.detail || "重开失败";
+      else if (r) actionErr.value = "重开已落地：世代 " + r.body.from_generation + "→" + r.body.to_generation;
       await refresh();
     }
 
@@ -209,6 +215,8 @@ createApp({
       locks,
       holds,
       dash,
+      stripCounts,
+      sameSource,
       form,
       holdForm,
       actionErr,
@@ -256,8 +264,8 @@ createApp({
       </div>
     </div>
     <div class="stat-row">
-      <div class="stat"><div class="k">开启窗</div><div class="v">{{dash.open_windows||0}}</div></div>
-      <div class="stat"><div class="k">已关窗</div><div class="v">{{dash.closed_windows||0}}</div></div>
+      <div class="stat"><div class="k">开启窗</div><div class="v">{{dash.open_windows||0}}</div><div class="src">条带 {{stripCounts.open_windows||0}} · 影表同源</div></div>
+      <div class="stat"><div class="k">已关窗</div><div class="v">{{dash.closed_windows||0}}</div><div class="src">条带 {{stripCounts.closed_windows||0}} · 影表同源</div></div>
       <div class="stat"><div class="k">拒收</div><div class="v">{{dash.rejects||0}}</div></div>
       <div class="stat"><div class="k">物化单</div><div class="v">{{dash.materializations||0}}</div></div>
     </div>

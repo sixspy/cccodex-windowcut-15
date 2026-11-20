@@ -37,10 +37,17 @@ def test_hold_and_reopen_stubs():
     assert c.post(f"/api/holds/{hid}/release-stub", headers=h).json()["stub"] is True
     c.post("/api/windows/2/close", headers=h)
     stub = c.post(
-        "/api/windows/2/reopen-stub", headers=h, json={"mode": "增量补丁"}
+        "/api/windows/2/reopen-stub", headers=h, json={"mode": "作废重算"}
     ).json()
-    assert stub["stub"] is True
-    assert stub["mode"] == "增量补丁"
+    assert stub["reopened"] is True
+    assert stub["mode"] == "作废重算"
+    assert stub["to_generation"] == 2
+    c.post("/api/windows/3/close", headers=h)
+    rejected = c.post(
+        "/api/windows/3/reopen-stub", headers=h, json={"mode": "增量补丁"}
+    )
+    assert rejected.status_code == 400
+    assert "同源册" in rejected.json()["detail"]
     assert c.get("/api/reopen-ledger", headers=h).json()["items"]
 
 

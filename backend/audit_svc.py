@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from auth import AuthHeader, require_user
-from db import connect
+from db import COUNTER_KEYS, counter_snapshot, connect, read_dash_counters
 
 router = APIRouter(tags=["audit"])
 
@@ -33,27 +33,34 @@ def audit_actions(authorization: AuthHeader = None):
 
 @router.get("/api/dashboard")
 def dashboard(authorization: AuthHeader = None):
+    """乙路径：只读 dash_counter 影子表，禁止在此聚合实表或缓存脏读。"""
     require_user(authorization)
     with connect() as conn:
-        open_n = conn.execute(
-            "SELECT COUNT(*) c FROM windows WHERE status='开启'"
-        ).fetchone()["c"]
-        closed_n = conn.execute(
-            "SELECT COUNT(*) c FROM windows WHERE status='已关闭'"
-        ).fetchone()["c"]
-        late_n = conn.execute("SELECT COUNT(*) c FROM late_bucket").fetchone()["c"]
-        reject_n = conn.execute("SELECT COUNT(*) c FROM reject_slips").fetchone()["c"]
-        hold_n = conn.execute(
-            "SELECT COUNT(*) c FROM hold_staging WHERE status='暂存'"
-        ).fetchone()["c"]
-        mats = conn.execute("SELECT COUNT(*) c FROM materializations").fetchone()["c"]
-        contention = conn.execute("SELECT COUNT(*) c FROM contention_log").fetchone()["c"]
+        counts = read_dash_counters(conn)
         return {
-            "open_windows": open_n,
-            "closed_windows": closed_n,
-            "late_bucket": late_n,
-            "rejects": reject_n,
-            "holds": hold_n,
-            "materializations": mats,
-            "contention": contention,
+            "open_windows": counts["open_windows"],
+            "closed_windows": counts["closed_windows"],
+            "late_bucket": counts["late_bucket"],
+            "rejects": counts["rejects"],
+            "holds": counts["holds"],
+            "materializations": counts["materializations"],
+            "contention": counts["contention"],
+            "reopens": counts["reopens"],
+            "source": "dash_counter",
         }
+
+
+@router.get("/api/dashboard/same-source")
+def dashboard_same_source(authorization: AuthHeader = None):
+    """诊断面：影子计数与实表快照比对，仅暴露给审计视图，不参与展示计数。"""
+    require_user(authorization)
+    with connect() as conn:
+        counters = read_dash_counters(conn)
+        snapshot = counter_snapshot(conn)
+        drift = {
+            k: {"counter": counters[k], "live": snapshot[k]}
+            for k in COUNTER_KEYS
+            if counters[k] != snapshot[k]
+        }
+        return {"aligned": not drift, "drift": drift, "source": "dash_counter"}
+

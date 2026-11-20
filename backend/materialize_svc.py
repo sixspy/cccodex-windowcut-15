@@ -6,7 +6,7 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException
 
 from auth import AuthHeader, require_user
-from db import connect, write_audit
+from db import commit_with_counters, connect, write_audit
 from locks import release, require_lock
 from models import MaterializeIn
 
@@ -44,7 +44,7 @@ def materialize(
                     str(wid),
                     {"partition": partition},
                 )
-                conn.commit()
+                commit_with_counters(conn)
                 raise HTTPException(500, "模拟物化失败（夹具用）")
             conn.execute(
                 """INSERT INTO materializations(window_id,status,row_count,total_amount,partition_key,created_at)
@@ -58,7 +58,7 @@ def materialize(
                 str(wid),
                 {"row_count": rows["c"], "total_amount": rows["s"], "partition": partition},
             )
-            conn.commit()
+            commit_with_counters(conn)
             return {
                 "row_count": rows["c"],
                 "total_amount": rows["s"],
@@ -66,7 +66,7 @@ def materialize(
             }
         finally:
             release(conn, lock_key, user)
-            conn.commit()
+            commit_with_counters(conn)
 
 
 @router.get("/api/materializations")
@@ -100,5 +100,5 @@ def partition_stub(authorization: AuthHeader = None):
                 "note": "正确性口径须择一，母仓不实现",
             },
         )
-        conn.commit()
+        commit_with_counters(conn)
     return {"ok": True, "stub": True, "module": "partition_mat"}

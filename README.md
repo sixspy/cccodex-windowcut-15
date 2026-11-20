@@ -4,6 +4,12 @@
 > FastAPI + Vue 3 + SQLite；交付须 `docker compose up -d --build` 一键起。  
 > **禁止同构换皮**：本仓主链路、表结构、接口与页面均独立。
 
+## 仪表同源（2026-11-20 定版）
+
+窗口计数走乙路径：`dash_counter` 影子表与关窗/开窗/重开同事务刷新，失败则整笔回滚；
+仪表卡、窗口条带只读影子表，禁止回退实表聚合或缓存脏读。口径见
+`ops/仪表同源册.md`，验收见 `tests/test_dashboard_sync.py`。
+
 ## 骨架一句话
 
 事件按业务窗裁切，迟到进旁路或拒收，关窗后物化结果并与窗口对账。
@@ -25,7 +31,7 @@
 | 业务 LOC | ≥900（目标 1000+） |
 | 后端具名模块 | `db` / `auth` / `locks` / `windows_svc` / `ingest_svc` / `late_svc` / `materialize_svc` / `reconcile_svc` / `audit_svc` / `hold_svc` / `reopen_svc` |
 | 前端视图 | 业务窗 / 入账 / 迟到桶 / 物化 / 对账 / 审计争用 |
-| 空桩 | hold 晋升、迟到补入、分区物化、窗重开 |
+| 空桩 | hold 晋升、迟到补入、分区物化 |
 
 ## 为何能出多题
 
